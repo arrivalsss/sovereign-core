@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+sov-chat: Sovereign Interactive Terminal Client
+"""
+
+import sys, os, json, hashlib, urllib.request, urllib.error
+from session_vault import SovereignSessionVault
+
+GATEWAY_URL = "http://127.0.0.1:8080/"
+
+def main():
+    session_id = None
+    vault = SovereignSessionVault()
+    loopback_token = hashlib.sha256(vault.master_key + b"_loopback_auth").hexdigest()[:32]
+
+    print("====================================================")
+    print("  SOVEREIGN CORE 4.2 - INTERACTIVE SECURE CLIENT    ")
+    print("  Commands: /purge (wipe session), /exit (quit)     ")
+    print("====================================================")
+
+    while True:
+        try:
+            prompt = input("\n[You] > ").strip()
+            if not prompt:
+                continue
+
+            if prompt in ("/exit", "exit", "quit"):
+                print("[INFO] Exiting client.")
+                break
+
+            if prompt == "/purge":
+                req = urllib.request.Request(
+                    GATEWAY_URL + "purge",
+                    data=b"",
+                    headers={"X-Session-ID": session_id or "", "X-Sovereign-Token": loopback_token}
+                )
+                with urllib.request.urlopen(req) as resp:
+                    data = json.loads(resp.read().decode())
+                    print("[PURGE] Session wiped clean:", data.get("status"))
+                session_id = None
+                continue
+
+            payload = {"messages": [{"role": "user", "content": prompt}]}
+            headers = {
+                "Content-Type": "application/json",
+                "X-Sovereign-Token": loopback_token
+            }
+            if session_id:
+                headers["X-Session-ID"] = session_id
+
+            req = urllib.request.Request(GATEWAY_URL, data=json.dumps(payload).encode(), headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    resp_data = json.loads(resp.read().decode())
+                    session_id = resp.headers.get("X-Session-ID") or resp_data.get("session_id")
+                    choice = resp_data.get("choices", [{}])[0]
+                    content = choice.get("message", {}).get("content", "[No Content]")
+                    print(f"\n[Sovereign Core] > {content}")
+            except urllib.error.HTTPError as e:
+                err_data = json.loads(e.read().decode())
+                print(f"\n[BLOCKED 403] Security Violation: {err_data.get('reason')}")
+                if "details" in err_data:
+                    print(f"Details: {err_data['details']}")
+            except Exception as e:
+                print(f"\n[ERROR] Connection failed: {e}")
+
+        except (KeyboardInterrupt, EOFError):
+            print("\n[INFO] Session terminated.")
+            break
+
+if __name__ == "__main__":
+    main()

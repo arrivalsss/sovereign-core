@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+CORE_DIR="$HOME/sovereign_core"
+PID_FILE="$CORE_DIR/proxy.pid"
+LOG_FILE="$CORE_DIR/proxy.log"
+DAEMON_SCRIPT="$CORE_DIR/sov_daemon.py"
+
+case "$1" in
+    start)
+        if pgrep -f "sov_daemon.py" > /dev/null; then
+            echo "[INFO] Sovereign Watchdog is already running."
+        else
+            echo "[START] Starting Sovereign Watchdog..."
+            python3 "$DAEMON_SCRIPT" > "$CORE_DIR/daemon.log" 2>&1 &
+            sleep 2
+            echo "[OK] Service initiated."
+        fi
+        ;;
+    stop)
+        echo "[STOP] Terminating Sovereign Core processes..."
+        pkill -f "sov_daemon.py"
+        pkill -f "proxy_gateway.py"
+        rm -f "$PID_FILE"
+        echo "[OK] All Sovereign processes stopped."
+        ;;
+    status)
+        echo "=== Sovereign Core Status ==="
+        if pgrep -f "proxy_gateway.py" > /dev/null; then
+            echo "Proxy Gateway: RUNNING (PID: $(pgrep -f "proxy_gateway.py" | head -n 1))"
+        else
+            echo "Proxy Gateway: STOPPED"
+        fi
+        if pgrep -f "sov_daemon.py" > /dev/null; then
+            echo "Watchdog Daemon: ACTIVE (PID: $(pgrep -f "sov_daemon.py" | head -n 1))"
+        else
+            echo "Watchdog Daemon: INACTIVE"
+        fi
+        TOKEN=$(python3 -c "from session_vault import SovereignSessionVault; import hashlib; v=SovereignSessionVault(); print(hashlib.sha256(v.master_key + b'_loopback_auth').hexdigest()[:32])")
+        CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ -d '{"messages":[{"role":"user","content":"ping"}]}' -H "Content-Type: application/json" -H "X-Sovereign-Token: $TOKEN")
+        if [ "$CODE" = "200" ]; then
+            echo "HTTP Health Endpoint: HEALTHY (Port 8080 responding 200 OK)"
+        else
+            echo "HTTP Health Endpoint: DOWN (Code: $CODE)"
+        fi
+        ;;
+    logs)
+        tail -n 25 "$LOG_FILE"
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    clean-vault)
+        echo "[MAINTENANCE] Cleaning expired ephemeral test vaults..."
+        count=$(find ~/sovereign_core/vault -maxdepth 1 -name "*.vault" ! -name ".*" | wc -l)
+        find ~/sovereign_core/vault -maxdepth 1 -name "*.vault" ! -name ".*" -delete
+        echo "[OK] Cleaned $count ephemeral session vaults. Core ledgers untouched."
+        ;;
+    audit)
+        echo "=== Sovereign Cryptographic Audit ==="
+        python3 audit_protocol.py
+        echo -e "\n=== Invariant Benchmark Compliance ==="
+        python3 test_adversarial.py | grep -E "(methods run|failing checks)"
+        ;;
+    set-key)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: sov-ctl set-key <provider> <api_key> [endpoint]"
+            exit 1
+        fi
+        python3 -c "from secrets_manager import SecretsManager; sm=SecretsManager(); sm.set_secret('$2', '$3', '$4' if '$4' else None); print('[KEY STORED] Provider $2 encrypted.')"
+        ;;
+    list-keys)
+        python3 -c "from secrets_manager import SecretsManager; sm=SecretsManager(); print('Stored Providers:', list(sm.get_all_secrets().keys()))"
+        ;;
+    *)
+        echo "Usage: sov-ctl {start|stop|restart|status|logs|audit|clean-vault|set-key|list-keys}"
+        exit 1
+        ;;
+esac
