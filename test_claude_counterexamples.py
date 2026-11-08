@@ -66,7 +66,7 @@ print("  [PASS] U+2028/U+2029 preserved; \\r\\r delimiter correctly framed.\n")
 print("=== 3. Counterexample 3: Lone Surrogates (Cs) in text_delta ===")
 prot3 = QuadViewStreamProtector(CANARY, variants_dict)
 gw3 = SSEStreamGateway(prot3)
-ev_lone = b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\ud800"}}\n\n'
+ev_lone = b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\\ud800"}}\n\n'
 lone_rejected = False
 try:
     gw3.feed_bytes(ev_lone)
