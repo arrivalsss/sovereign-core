@@ -1,0 +1,1 @@
+KERNEL 4.2 RATIFIED: REQ 0, PRB 0 (0.4s) on Nubia NX779J
