@@ -1,0 +1,25 @@
+# Secrets and vault
+vault/
+.secrets.vault
+.vault_key
+*.vault
+*.key
+
+# Logs and runtime files
+*.log
+*.pid
+__pycache__/
+*.pyc
+*.pyo
+
+# Local environment files
+.env
+.env.*
+*.env
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+
+# Termux-specific
+termux.properties
