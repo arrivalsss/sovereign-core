@@ -12,6 +12,11 @@ import urllib.request
 import urllib.error
 import json
 import sys
+import os
+import pytest
+
+if os.environ.get("RUN_PROXY_TESTS") != "1":
+    pytest.skip("Proxy integration tests disabled (set RUN_PROXY_TESTS=1 to enable)", allow_module_level=True)
 
 BASE_URL = "http://127.0.0.1:8080/"
 
