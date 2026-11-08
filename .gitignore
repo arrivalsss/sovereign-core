@@ -1,25 +1,32 @@
-# Secrets and vault
-vault/
-.secrets.vault
-.vault_key
-*.vault
-*.key
-
-# Logs and runtime files
-*.log
-*.pid
-__pycache__/
-*.pyc
-*.pyo
-
-# Local environment files
+# Secrets and environment files
 .env
 .env.*
 *.env
+*.key
+*.pem
+*.p12
+*.pfx
 
-# OS and editor files
+# Logs and runtime files
+*.log
+logs/
+*.pid
+pids/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS files
 .DS_Store
 Thumbs.db
 
-# Termux-specific
-termux.properties
+# Editor files
+.vscode/
+.idea/
+
+# Local vault and private runtime data
+vault/
