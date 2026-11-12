@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import json, os, sys, gc, hashlib, urllib.request, urllib.error
+import json, os, sys, gc, hashlib, hmac, urllib.request, urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from middleware import SovereignMiddleware
 from session_vault import SovereignSessionVault
@@ -28,18 +28,47 @@ class SovereignProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
-        incoming_token = self.headers.get("X-Sovereign-Token")
-        content_length = int(self.headers.get("Content-Length", 0))
-        raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
+    timeout = 15
+    MAX_BODY = 1 << 20
+    MAX_PROBE_BODY = 512
+    HEALTH_PROBE = [{"role": "user", "content": "ping"}]
 
-        is_health_check = "ping" in raw_body and self.client_address[0] == "127.0.0.1"
-        if not is_health_check and incoming_token != self.loopback_token:
-            self._send_json_response(401, {"error": "Unauthorized Local Origin"})
+    @classmethod
+    def _is_health_probe(cls, raw_body):
+        try:
+            data = json.loads(raw_body)
+        except (ValueError, RecursionError):
+            return False
+        return isinstance(data, dict) and data.get("messages") == cls.HEALTH_PROBE
+
+    def do_POST(self):
+        incoming_token = self.headers.get("X-Sovereign-Token") or ""
+        authorized = hmac.compare_digest(incoming_token.encode("utf-8"), self.loopback_token.encode("utf-8"))
+        try:
+            content_length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            content_length = -1
+        if content_length < 0:
+            self._send_json_response(400, {"error": "Invalid Content-Length"})
+            return
+        if content_length > (self.MAX_BODY if authorized else self.MAX_PROBE_BODY):
+            if authorized:
+                self._send_json_response(413, {"error": "Request body too large"})
+            else:
+                self._send_json_response(401, {"error": "Unauthorized Local Origin"})
+            return
+        try:
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
+        except UnicodeDecodeError:
+            self._send_json_response(400, {"error": "Body is not valid UTF-8"})
             return
 
-        if "ping" in raw_body:
+        if self.client_address[0] == "127.0.0.1" and self._is_health_probe(raw_body):
             self._send_json_response(200, {"status": "HEALTHY", "engine": "loopback"})
+            return
+
+        if not authorized:
+            self._send_json_response(401, {"error": "Unauthorized Local Origin"})
             return
 
         if self.path == "/purge":
