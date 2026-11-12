@@ -2,6 +2,9 @@
 .env
 .env.*
 *.env
+vault/
+vault/.secrets.vault
+vault/.vault_key
 *.key
 *.pem
 *.p12
@@ -28,5 +31,12 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Local vault and private runtime data
-vault/
+# Local backups and test artifacts
+*.bak
+*.before-*
+sov_auth_test_response.json
+sovereign_test_report.txt
+last_answer.txt
+sovereign_client_test_output.txt
+proxy.log
+pytest-result.txt
