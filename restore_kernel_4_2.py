@@ -24,8 +24,7 @@ for fname in sorted(FILES.keys()):
     fpath = os.path.join(BASE_DIR, fname)
     with open(fpath, 'rb') as f:
         h = hashlib.sha256(f.read()).hexdigest()
-    sums.append(f'{h}  {fname}
-')
+    sums.append(f'{h}  {fname}\n')
 
 seal = os.path.join(BASE_DIR, 'SHA256SUMS.sealed')
 if os.path.exists(seal):
