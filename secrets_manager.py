@@ -14,6 +14,16 @@ from session_vault import SovereignSessionVault, VAULT_DIR
 
 SECRETS_FILE = os.path.join(VAULT_DIR, ".secrets.vault")
 
+DEFAULT_ENDPOINTS = {
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+}
+
+
+class SecretsVaultError(Exception):
+    """The secrets vault exists but cannot be read or decrypted. Nothing is overwritten."""
+
 
 class SecretsManager:
     def __init__(self):
@@ -33,43 +43,53 @@ class SecretsManager:
 
     def _write(self, raw: bytes):
         encrypted = self._encrypt_fernet(raw)
-        with open(SECRETS_FILE, "wb") as f:
-            f.write(encrypted)
-        os.chmod(SECRETS_FILE, 0o600)
+        tmp = os.path.join(VAULT_DIR, ".secrets.%s.tmp" % os.urandom(8).hex())
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(encrypted)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, SECRETS_FILE)
+        except BaseException:
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            raise
 
     def set_secret(self, provider: str, api_key: str, endpoint: str = None):
+        name = provider.lower()
+        endpoint = endpoint or DEFAULT_ENDPOINTS.get(name)
+        if not endpoint:
+            raise ValueError("no default endpoint for provider %r; pass the endpoint explicitly" % name)
         secrets = self.get_all_secrets()
-        secrets[provider.lower()] = {
-            "api_key": api_key,
-            "endpoint": endpoint or "https://api.openai.com/v1/chat/completions"
-        }
-        raw = json.dumps(secrets).encode("utf-8")
-        self._write(raw)
+        secrets[name] = {"api_key": api_key, "endpoint": endpoint}
+        self._write(json.dumps(secrets).encode("utf-8"))
 
     def get_all_secrets(self) -> dict:
-        if not os.path.exists(SECRETS_FILE):
+        if not os.path.lexists(SECRETS_FILE):
             return {}
         try:
-            with open(SECRETS_FILE, "rb") as f:
+            fd = os.open(SECRETS_FILE, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as f:
                 data = f.read()
-        except Exception:
-            return {}
-        # Try Fernet first (new format)
+        except OSError as e:
+            raise SecretsVaultError("secrets vault cannot be read (%s)" % type(e).__name__) from None
         try:
-            decrypted = self._decrypt_fernet(data)
-            return json.loads(decrypted.decode("utf-8"))
-        except (InvalidToken, Exception):
-            pass
-        # Fall back to legacy XOR, then migrate to Fernet
-        try:
-            decrypted = self._crypt_legacy(data)
-            secrets = json.loads(decrypted.decode("utf-8"))
-            # Migrate to Fernet immediately
-            raw = json.dumps(secrets).encode("utf-8")
-            self._write(raw)
+            secrets = json.loads(self._decrypt_fernet(data).decode("utf-8"))
+        except InvalidToken:
+            try:
+                secrets = json.loads(self._crypt_legacy(data).decode("utf-8"))
+            except ValueError:
+                raise SecretsVaultError("secrets vault cannot be decrypted with the current vault key") from None
+            if not isinstance(secrets, dict):
+                raise SecretsVaultError("secrets vault has an unexpected format")
+            self._write(json.dumps(secrets).encode("utf-8"))
             return secrets
-        except Exception:
-            return {}
+        except ValueError:
+            raise SecretsVaultError("secrets vault decrypted but is not valid JSON") from None
+        if not isinstance(secrets, dict):
+            raise SecretsVaultError("secrets vault has an unexpected format")
+        return secrets
 
     def delete_secret(self, provider: str) -> bool:
         secrets = self.get_all_secrets()
