@@ -30,10 +30,13 @@ def main():
                 break
 
             if prompt == "/purge":
+                if not (session_id and len(session_id) == 32 and all(c in "0123456789abcdef" for c in session_id)):
+                    print("[PURGE] No active session to wipe; nothing sent.")
+                    continue
                 req = urllib.request.Request(
                     GATEWAY_URL + "purge",
                     data=b"",
-                    headers={"X-Session-ID": session_id or "", "X-Sovereign-Token": loopback_token}
+                    headers={"X-Session-ID": session_id, "X-Sovereign-Token": loopback_token}
                 )
                 with urllib.request.urlopen(req) as resp:
                     data = json.loads(resp.read().decode())
