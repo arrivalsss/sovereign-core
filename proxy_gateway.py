@@ -5,7 +5,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from middleware import SovereignMiddleware
 from session_vault import SovereignSessionVault
 from audit_protocol import SovereignAuditor
-from secrets_manager import SecretsManager
+from secrets_manager import SecretsManager, SecretsVaultError
 
 HOST = os.environ.get("SOV_PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SOV_PROXY_PORT", "8080"))
@@ -132,8 +132,14 @@ class SovereignProxyHandler(BaseHTTPRequestHandler):
         resp_data = None
         last_err = None
 
+        try:
+            vault_secrets = self.secrets.get_all_secrets()
+        except SecretsVaultError as e:
+            self._send_json_response(500, {"error": "Secrets vault unavailable", "details": str(e)})
+            return
+
         for prov_name, model_name in providers_to_try:
-            sec = self.secrets.get_secret(prov_name)
+            sec = vault_secrets.get(prov_name, {})
             api_key = sec.get("api_key")
             endpoint = sec.get("endpoint")
             if not api_key:
