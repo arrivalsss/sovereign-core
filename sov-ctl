@@ -63,11 +63,27 @@ case "$1" in
         python3 test_adversarial.py | grep -E "(methods run|failing checks)"
         ;;
     set-key)
-        if [ -z "$2" ] || [ -z "$3" ]; then
-            echo "Usage: sov-ctl set-key <provider> <api_key> [endpoint]"
+        if [ -z "$2" ] || [ $# -gt 3 ] || { [ -n "$3" ] && [ "${3#https://}" = "$3" ]; }; then
+            echo "Usage: sov-ctl set-key <provider> [https://endpoint]"
+            echo "The key is read from a hidden prompt. Never type it on the command line: the shell saves it in history."
+            echo "If you just did, remove that history line or rotate the key."
             exit 1
         fi
-        python3 -c "from secrets_manager import SecretsManager; sm=SecretsManager(); sm.set_secret('$2', '$3', '$4' if '$4' else None); print('[KEY STORED] Provider $2 encrypted.')"
+        IFS= read -r -s -p "API key for $2 (input hidden): " KEY; echo
+        printf '%s' "$KEY" | (cd "$CORE_DIR" && python3 -c '
+import sys
+from secrets_manager import SecretsManager
+key = sys.stdin.read().strip()
+if not key:
+    sys.exit("[ERROR] Empty key. Nothing stored.")
+name, endpoint = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else None)
+try:
+    SecretsManager().set_secret(name, key, endpoint)
+except Exception as e:
+    sys.exit("[ERROR] %s: %s. Nothing stored." % (type(e).__name__, e))
+print("[KEY STORED] Provider %s encrypted." % name.lower())
+' "$2" ${3:+"$3"})
+        RC=$?; unset KEY; exit $RC
         ;;
     list-keys)
         python3 -c "from secrets_manager import SecretsManager; sm=SecretsManager(); print('Stored Providers:', list(sm.get_all_secrets().keys()))"
