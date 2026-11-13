@@ -3,7 +3,7 @@
 """
 session_vault.py - Sovereign Session Isolation & Storage (Track 4)
 Provides per-session isolation, canary bounding, and encrypted local storage.
-Python Standard Library only (hashlib, hmac, secrets, json, os).
+Standard library, plus cryptography (Fernet) for stored session files.
 """
 
 import os
@@ -56,24 +56,49 @@ class SovereignSessionVault:
             raise KeyError("Session does not exist")
         self.sessions[session_id]["history"].append({"role": role, "content": content})
 
+    def _session_fernet(self, session_id: str):
+        from cryptography.fernet import Fernet
+        import base64
+        return Fernet(base64.urlsafe_b64encode(self._derive_session_key(session_id)))
+
     def save_session_to_vault(self, session_id: str):
         if session_id not in self.sessions:
             raise KeyError("Session does not exist")
 
-        sess_data = self.sessions[session_id]
-        raw_bytes = json.dumps(sess_data, ensure_ascii=False).encode("utf-8")
-        session_key = self._derive_session_key(session_id)
-
-        # تشفير XOR متزامن مع SHA-256 Key Stream كحل قياسي مدمج
-        keystream = hashlib.sha256(session_key + b"stream").digest()
-        encrypted = bytearray()
-        for i, b in enumerate(raw_bytes):
-            encrypted.append(b ^ keystream[i % len(keystream)])
+        raw_bytes = json.dumps(self.sessions[session_id], ensure_ascii=False).encode("utf-8")
+        encrypted = self._session_fernet(session_id).encrypt(raw_bytes)
 
         file_path = os.path.join(VAULT_DIR, f"{session_id}.vault")
-        with open(file_path, "wb") as f:
-            f.write(encrypted)
-        os.chmod(file_path, 0o600)
+        tmp_path = os.path.join(VAULT_DIR, ".%s.tmp" % secrets.token_hex(8))
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(encrypted)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, file_path)
+        except BaseException:
+            if os.path.lexists(tmp_path):
+                os.unlink(tmp_path)
+            raise
+
+    def load_session_from_vault(self, session_id: str) -> Dict[str, Any]:
+        """Read a stored session: Fernet, or the legacy XOR format written before it."""
+        if not (len(session_id) == 32 and all(c in "0123456789abcdef" for c in session_id)):
+            raise ValueError("invalid session id")
+        fd = os.open(os.path.join(VAULT_DIR, f"{session_id}.vault"), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as f:
+            data = f.read()
+        from cryptography.fernet import InvalidToken
+        try:
+            return json.loads(self._session_fernet(session_id).decrypt(data).decode("utf-8"))
+        except InvalidToken:
+            pass
+        keystream = hashlib.sha256(self._derive_session_key(session_id) + b"stream").digest()
+        sess = json.loads(bytes(b ^ keystream[i % len(keystream)] for i, b in enumerate(data)).decode("utf-8"))
+        if not isinstance(sess, dict) or sess.get("session_id") != session_id:
+            raise ValueError("session file does not decrypt to this session")
+        return sess
 
     def purge_session(self, session_id: str):
         """مسح آمن للجلسة من الذاكرة والقرص"""
